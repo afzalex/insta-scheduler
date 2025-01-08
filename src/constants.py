@@ -14,6 +14,7 @@ XPATH_EDIT_HEADING = "//div[@role='heading' and text()='Edit']"
 XPATH_NEW_REEL_HEADING = "//div[@role='heading' and text()='New reel']"
 XPATH_REEL_SHARING_HEADING = "//div[@role='heading' and text()='Sharing']"
 XPATH_REEL_SHARED_HEADING = "//div[@role='heading' and text()='Reel shared']"
+XPATH_POST_SHARED_HEADING = "//div[@role='heading' and text()='Post shared']"
 XPATH_CAPTION_INPUT = "//div[@aria-label='Write a caption...']"
 XPATH_SHARE_BUTTON = "//div[@role='button' and text()='Share']"
 

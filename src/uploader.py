@@ -20,6 +20,7 @@ def main():
         logger.info("Starting Instagram upload process")
         config = InstagramConfig.from_json(Path("config/env_config.json"))
         logger.info("Configuration loaded successfully")
+        print(config)
         
         with managed_driver() as driver:
             logger.info("Navigating to Instagram login page")
@@ -32,8 +33,8 @@ def main():
                 logger.info("Already logged in")
             else:
                 logger.info("Login required, attempting login")
-                username = os.getenv("INSTAGRAM_USERNAME")
-                password = os.getenv("INSTAGRAM_PASSWORD")
+                username = config.username
+                password = config.password
 
                 if not username or not password:
                     logger.info("Credentials not found in environment, requesting manual input")
@@ -41,8 +42,8 @@ def main():
                     password = input("Enter your Instagram password: ").strip()
                 
                 logger.info("Submitting login credentials")
-                retry_get_element(driver, By.NAME, "username").send_keys(username)
-                retry_get_element(driver, By.NAME, "password").send_keys(password + Keys.RETURN)
+                retry_get_element(driver, "//input[@name='username']").send_keys(username)
+                retry_get_element(driver, "//input[@name='password']").send_keys(password + Keys.RETURN)
 
                 logger.info("Handling post-login prompts")
                 try:
@@ -92,7 +93,7 @@ def main():
             logger.info("Waiting for upload completion")
             wait_for_element_to_disappear(driver, XPATH_NEW_REEL_HEADING)
             wait_for_element_to_disappear(driver, XPATH_REEL_SHARING_HEADING, 60)
-            retry_get_element(driver, XPATH_REEL_SHARED_HEADING)
+            retry_get_element(driver, [XPATH_REEL_SHARED_HEADING, XPATH_POST_SHARED_HEADING])
             logger.info("Upload completed successfully")
 
     except InstagramUploaderError as e:

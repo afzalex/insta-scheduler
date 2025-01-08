@@ -98,7 +98,7 @@ def get_chrome_driver():
     chrome_options.add_argument("--disable-infobars") 
     chrome_options.add_argument("--disable-extensions")
     # chrome_options.add_argument("/home/ubuntu/instaworkshop/chrome-headless-shell-linux64/chrome-headless-shell")
-    # chrome_options.add_argument("--headless")
+    chrome_options.add_argument("--headless")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-gpu")
     # chrome_options.binary_location = "/home/ubuntu/instaworkshop/chrome-headless-shell-linux64/chrome-headless-shell"
