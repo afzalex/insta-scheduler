@@ -7,6 +7,8 @@ dependencies:
   - selenium
   - pytest
   - prompt_toolkit
+  - pandas
+  - pyyaml
   - pip
   - pip:
     - webdriver-manager 
