@@ -8,7 +8,9 @@ from src.utils import (
     get_chrome_driver,
     wait_for_element_to_disappear,
     managed_driver,
-    logger
+    logger,
+    verify_file_exists,
+    parse_arguments
 )
 from src.constants import *
 from src.exceptions import InstagramUploaderError
@@ -18,11 +20,12 @@ from pathlib import Path
 def main():
     try:
         logger.info("Starting Instagram upload process")
+        args = parse_arguments()
+        
         config = InstagramConfig.from_json(Path("config/env_config.json"))
         logger.info("Configuration loaded successfully")
-        print(config)
         
-        with managed_driver() as driver:
+        with managed_driver(headless=args.headless) as driver:
             logger.info("Navigating to Instagram login page")
             driver.get("https://www.instagram.com/accounts/login/")
             
@@ -64,9 +67,19 @@ def main():
             logger.info("Loading post configuration")
             config_data = get_config_data("config/instagram_upload_config.txt")
             config_lines = config_data.strip().split('\n')
-            post_media_path = config_lines[0].strip() if len(config_lines) > 0 else ""
-            post_caption = config_lines[1].strip() if len(config_lines) > 1 else ""
-            logger.info(f"Media path: {post_media_path}")
+            
+            # Use command line args if provided, otherwise use config file
+            post_media_path = args.file if args.file else (config_lines[0].strip() if len(config_lines) > 0 else "")
+            post_caption = args.caption if args.caption else (config_lines[1].strip() if len(config_lines) > 1 else "")
+            
+            if not post_media_path:
+                raise InstagramUploaderError("No media file path provided")
+                
+            try:
+                post_media_path = verify_file_exists(post_media_path)
+                logger.info(f"Media file verified: {post_media_path}")
+            except (FileNotFoundError, PermissionError) as e:
+                raise InstagramUploaderError(f"Media file error: {e}")
 
             logger.info("Uploading media file")
             retry_get_element(driver, XPATH_FILE_INPUT).send_keys(post_media_path)
@@ -79,10 +92,10 @@ def main():
             logger.info("Checking post type")
             heading_label = retry_get_element(driver, [XPATH_EDIT_HEADING, XPATH_NEW_REEL_HEADING])
             if heading_label.text == "Edit":
-                logger.info("Post type: Video")
+                logger.info("Edit Step found -- skipping")
                 retry_get_element(driver, XPATH_NEXT_BUTTON).click()
             else:
-                logger.info("Post type: Image")
+                logger.info("New Post Step found -- posting media")
 
             logger.info("Adding caption")
             retry_get_element(driver, XPATH_CAPTION_INPUT).send_keys(post_caption)
