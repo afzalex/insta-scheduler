@@ -1,9 +1,9 @@
+extra_caption: ' Please rate the Wallpaper #Wallpaper'
+media_list: config/media_list.csv
 schedule:
-  - time: "13:00"  # Required
-    window_hours: 2  # Optional (default: 0)
-    max_tasks: 2    # Optional (default: 1)
-  - time: "19:00"
-  - time: "15:00"
-    window_hours: 1
-
-media_list: "config/media_list.csv" 
+- max_tasks: 2
+  time: '13:00'
+  window_hours: 2
+- time: '19:00'
+- time: '21:30'
+  window_hours: 1

@@ -1,7 +1,7 @@
 name: instaworkshop
 channels:
-  - defaults
   - conda-forge
+  - defaults
 dependencies:
   - python=3.10
   - selenium
@@ -11,4 +11,10 @@ dependencies:
   - pyyaml
   - pip
   - pip:
-    - webdriver-manager 
+    - webdriver-manager
+    - transformers
+    - pillow
+    - --index-url https://download.pytorch.org/whl/cu118   # for GPU
+    # - --index-url https://download.pytorch.org/whl/cpu   # for CPU
+    - torch
+    - torchvision 

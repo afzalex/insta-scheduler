@@ -5,6 +5,9 @@ import time
 import subprocess
 from pathlib import Path
 import logging
+from .window_tracker import WindowTracker
+import signal
+import atexit
 
 logger = logging.getLogger(__name__)
 
@@ -31,20 +34,53 @@ class MediaStatus:
         return status != cls.ERROR and status != cls.PROCESSED
 
 class MediaScheduler:
-    def __init__(self, config_path="config/scheduler_config.yml"):
-        self.config_path = Path(config_path)
-        self.validate_and_load_config()
+    def __init__(self, config_path=None):
+        """Initialize scheduler with config file path"""
+        self.config_path = config_path
+        self.config = None
+        self.media_df = None
+        self.schedule_times = []
+        self.schedule_config = {}
+        self.current_window = None
+        self.tasks_in_window = 0
+        self.extra_caption = None  # Store extra caption
+        self.window_tracker = WindowTracker()
+        self.has_lock = False  # Track if this instance created the lock
+        self.headless = True  # Default to headless mode
         
+        # Register cleanup handlers
+        atexit.register(self._cleanup)
+        signal.signal(signal.SIGTERM, self._signal_handler)
+        signal.signal(signal.SIGINT, self._signal_handler)
+        
+    def _cleanup(self):
+        """Cleanup resources"""
+        if self.has_lock:  # Only cleanup if we created the lock
+            logger.info("Cleaning up scheduler resources")
+            self.window_tracker.release_lock()
+            self.has_lock = False
+        
+    def _signal_handler(self, signum, frame):
+        """Handle termination signals"""
+        sig_name = signal.Signals(signum).name
+        logger.info(f"Received signal {sig_name}, shutting down gracefully")
+        # Run cleanup and exit
+        self._cleanup()
+        exit(0)
+
     def validate_and_load_config(self):
         """Validate and load all configuration files"""
-        # Check scheduler config exists
-        if not self.config_path.exists():
-            raise SchedulerConfigError(f"Scheduler config not found: {self.config_path}")
-            
-        # Load and validate scheduler config
         try:
-            with open(self.config_path, 'r') as f:
+            with open(self.config_path) as f:
                 self.config = yaml.safe_load(f)
+                
+            required_keys = ['schedule', 'media_list']
+            missing = [k for k in required_keys if k not in self.config]
+            if missing:
+                raise SchedulerConfigError(f"Missing required keys: {missing}")
+                
+            # Get extra caption if provided
+            self.extra_caption = self.config.get('extra_caption', None)
                 
             # Validate required fields
             if 'schedule' not in self.config:
@@ -77,7 +113,11 @@ class MediaScheduler:
                 
             # Initialize status column if it doesn't exist
             if '_STATUS_' not in self.media_df.columns:
+                logger.info("Adding _STATUS_ column to media list")
                 self.media_df['_STATUS_'] = MediaStatus.PENDING
+                # Save the updated DataFrame
+                self.media_df.to_csv(media_list_path, index=False)
+                logger.info("Media list updated with _STATUS_ column")
                 
         except pd.errors.EmptyDataError:
             raise SchedulerConfigError("Media list file is empty")
@@ -140,7 +180,8 @@ class MediaScheduler:
         # Reset task counter if we've moved to a new window
         if self.current_window != schedule_time:
             self.current_window = schedule_time
-            self.tasks_in_window = 0
+            window_key = schedule_time.strftime("%Y-%m-%d %H:%M")
+            self.tasks_in_window = self.window_tracker.get_tasks_in_window(window_key)
             
         # Check if we're within window and haven't exceeded max tasks
         if schedule_time <= now <= window_end:
@@ -158,6 +199,12 @@ class MediaScheduler:
         media_list_path = Path(self.config['media_list'])
         try:
             self.media_df = pd.read_csv(media_list_path)
+            
+            # Add _STATUS_ column if it doesn't exist
+            if '_STATUS_' not in self.media_df.columns:
+                self.media_df['_STATUS_'] = MediaStatus.PENDING
+                self.media_df.to_csv(media_list_path, index=False)
+                
         except Exception as e:
             logger.error(f"Failed to reload media list: {e}")
             return None
@@ -197,18 +244,33 @@ class MediaScheduler:
         except Exception as e:
             logger.error(f"Failed to mark item status: {e}")
 
-    def run_upload(self, media_item):
+    def insta_upload(self, media_item):
         """Run the upload script with the media item"""
         try:
-            result = subprocess.run([
-                'python', 'run.py',
+            command = [
+                'python', 'run.py', 'insta-upload',
                 '-f', media_item['file_path'],
                 '-c', media_item['caption']
-            ], check=True)
+            ]
+            
+            # Add extra caption if provided
+            if self.extra_caption:
+                command.extend(['--extra-caption', self.extra_caption])
+                
+            # Add no-headless flag if headless is False
+            if not self.headless:
+                command.append('--no-headless')
+                
+            result = subprocess.run(command, check=True)
             
             if result.returncode == 0:
                 self.mark_status(media_item['file_path'], MediaStatus.PROCESSED)
                 logger.info(f"Successfully processed {media_item['file_path']}")
+                self.tasks_in_window += 1
+                # Record task in window tracker
+                if self.current_window:
+                    window_key = self.current_window.strftime("%Y-%m-%d %H:%M")
+                    self.window_tracker.record_task(window_key, self.tasks_in_window)
                 logger.info(f"Tasks completed in current window: {self.tasks_in_window}")
                 return True
         except subprocess.CalledProcessError as e:
@@ -220,23 +282,59 @@ class MediaScheduler:
 
     def run(self):
         """Main scheduler loop"""
-        while True:
-            media_item = self.get_next_unprocessed_media()
+        # Create lock file
+        if not self.window_tracker.create_lock():
+            logger.error("Another instance of scheduler is already running")
+            logger.info("If you are sure no other instance is running, you can manually delete the lock file:")
+            logger.info(f"    rm {self.window_tracker.lock_file}")
+            return False
             
-            if media_item is not None:
-                logger.info(f"Processing media: {media_item['file_path']}")
-                self.run_upload(media_item)
-            
-            # Sleep for a minute before checking again
-            time.sleep(60)
+        self.has_lock = True  # Mark that we created the lock
+        
+        try:
+            while True:
+                next_schedule = self.get_next_schedule_time()
+                now = datetime.now()
+                
+                # If next schedule is in future, print waiting message
+                if next_schedule > now:
+                    wait_time = next_schedule - now
+                    hours, remainder = divmod(wait_time.seconds, 3600)
+                    minutes, seconds = divmod(remainder, 60)
+                    time_str = []
+                    if hours > 0:
+                        time_str.append(f"{hours} hour{'s' if hours != 1 else ''}")
+                    if minutes > 0:
+                        time_str.append(f"{minutes} minute{'s' if minutes != 1 else ''}")
+                    if seconds > 0 and not hours and minutes < 5:  # Only show seconds if less than 5 minutes away
+                        time_str.append(f"{seconds} second{'s' if seconds != 1 else ''}")
+                    
+                    wait_str = " and ".join(time_str) if len(time_str) <= 2 else ", ".join(time_str[:-1]) + f" and {time_str[-1]}"
+                    logger.info(f"Waiting for next scheduled task at {next_schedule.strftime('%H:%M')} ({wait_str} from now)")
+                
+                media_item = self.get_next_unprocessed_media()
+                
+                if media_item is not None:
+                    logger.info(f"Processing media: {media_item['file_path']}")
+                    self.insta_upload(media_item)
+                
+                # Sleep for a minute before checking again
+                time.sleep(60)
+        except Exception as e:
+            logger.exception("Error in scheduler loop")
+            return False
+        finally:
+            # Release lock file when done
+            self._cleanup()
 
-def main(config_path=None, media_list=None):
+def main(config_path=None, media_list=None, headless=True):
     """
     Run the scheduler with the specified configuration
     
     Args:
         config_path: Path to scheduler config YAML file
         media_list: Path to media list CSV file (overrides config)
+        headless: Whether to run in headless mode (default: True)
         
     Returns:
         int: Exit code (0 for success, 1 for error)
@@ -248,10 +346,23 @@ def main(config_path=None, media_list=None):
         )
         
         scheduler = MediaScheduler(config_path=config_path or "config/scheduler_config.yml")
+        scheduler.headless = headless  # Set headless mode
+        
+        # Check if scheduler is already running
+        if scheduler.window_tracker.is_scheduler_running():
+            logger.error("Another instance of scheduler is already running")
+            logger.info("If you are sure no other instance is running, you can manually delete the lock file:")
+            logger.info(f"    rm {scheduler.window_tracker.lock_file}")
+            return 1
+            
+        scheduler.validate_and_load_config()  # Load config after initialization
+        
         if media_list:
             scheduler.update_media_list(media_list)
             
-        scheduler.run()
+        if not scheduler.run():
+            return 1
+            
         return 0
         
     except SchedulerConfigError as e:

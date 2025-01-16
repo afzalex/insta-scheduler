@@ -17,6 +17,30 @@ from src.exceptions import InstagramUploaderError
 from src.config import InstagramConfig
 from pathlib import Path
 
+def get_or_generate_caption(media_path: str, caption: str = None) -> str:
+    """
+    Get provided caption or generate one using BLIP
+    
+    Args:
+        media_path: Path to media file
+        caption: Optional provided caption
+        
+    Returns:
+        str: Caption to use (generated or provided)
+    """
+    if caption:
+        return caption
+        
+    try:
+        from src.caption_generator import CaptionGenerator
+        generator = CaptionGenerator()
+        generated_caption = generator.generate_caption(media_path)
+        logger.info(f"Generated caption: {generated_caption}")
+        return generated_caption
+    except Exception as e:
+        logger.warning(f"Failed to generate caption: {e}")
+        return None
+
 def validate_upload_requirements(args, config):
     """
     Validate all requirements before starting the upload process
@@ -28,13 +52,12 @@ def validate_upload_requirements(args, config):
     Raises:
         InstagramUploaderError: If any validation fails
     """
-    # Get media path and caption
+    # Get media path from args or config
     config_data = get_config_data("config/instagram_upload_config.txt")
     config_lines = config_data.strip().split('\n') if config_data else []
     
-    # Use command line args if provided, otherwise use config file
+    # Use command line args if provided, otherwise use config file for media path
     post_media_path = args.file if args.file else (config_lines[0].strip() if len(config_lines) > 0 else "")
-    post_caption = args.caption if args.caption else (config_lines[1].strip() if len(config_lines) > 1 else "")
     
     if not post_media_path:
         raise InstagramUploaderError("No media file path provided")
@@ -44,17 +67,37 @@ def validate_upload_requirements(args, config):
         post_media_path = verify_file_exists(post_media_path)
     except (FileNotFoundError, PermissionError) as e:
         raise InstagramUploaderError(f"Media file error: {e}")
+    
+    # Handle caption with priority:
+    # 1. Command line argument
+    # 2. Generated caption
+    # 3. Config file (fallback)
+    post_caption = None
+    
+    # Check command line argument first
+    if hasattr(args, 'caption') and args.caption:
+        post_caption = args.caption
+    else:
+        # Try to generate caption
+        post_caption = get_or_generate_caption(post_media_path)
         
-    # Check if caption is provided (optional, but log a warning)
-    if not post_caption:
-        logger.warning("No caption provided for the post")
-        
+        # If generation fails, try config file as last resort
+        if not post_caption and len(config_lines) > 1 and config_lines[1].strip():
+            post_caption = config_lines[1].strip()
+            logger.info("Using caption from config file as fallback")
+    
+    # Append extra caption if provided
+    if post_caption and hasattr(args, 'extra_caption') and args.extra_caption:
+        post_caption = f"{post_caption}\n\n{args.extra_caption}"
+        logger.info("Added extra caption to post")
+            
     return post_media_path, post_caption
 
-def main():
+def main(args=None):
     try:
         logger.info("Starting Instagram upload process")
-        args = parse_arguments()
+        if args is None:
+            args = parse_arguments()
         
         # Load configuration
         try:
