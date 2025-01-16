@@ -1,22 +1,23 @@
-# Instagram Media Manager
+# Instagram Post Scheduler
 
-A tool for automated Instagram media uploads with scheduling capabilities.
+An automated tool for scheduling and uploading posts to Instagram. It manages timed posts with AI-generated captions and customizable scheduling windows, supporting various types of media content.
 
 ## Features
 
-- Schedule media uploads at specific times
+- Schedule Instagram posts at specific times
 - Support for multiple daily upload windows
-- Automated caption generation using BLIP
+- AI-powered caption generation using BLIP
 - Headless mode for background operation
 - Lock-based scheduler to prevent multiple instances
 - Persistent tracking of upload status and window tasks
+- Customizable hashtags and captions for posts
 
 ## Installation
 
 1. Clone the repository:
 ```bash
 git clone <repository-url>
-cd instagram-media-manager
+cd insta-scheduler
 ```
 
 2. Create and activate conda environment:
@@ -25,7 +26,7 @@ cd instagram-media-manager
 conda env create -f environment.yml
 
 # Activate the environment
-conda activate instaworkshop
+conda activate insta-scheduler
 ```
 
 3. Verify installation:

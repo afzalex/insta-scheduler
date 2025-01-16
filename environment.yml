@@ -1,4 +1,4 @@
-name: instaworkshop
+name: insta-scheduler
 channels:
   - conda-forge
   - defaults
