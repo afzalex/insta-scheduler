@@ -1,39 +1,168 @@
-# Instagram Uploader
+# Instagram Media Manager
 
-This project automates the process of uploading images to Instagram using Selenium.
+A tool for automated Instagram media uploads with scheduling capabilities.
 
-## Setup
+## Features
 
-1. **Clone the Repository:**
-   ```bash
-   git clone <repository-url>
-   cd <repository-directory>
-   ```
+- Schedule media uploads at specific times
+- Support for multiple daily upload windows
+- Automated caption generation using BLIP
+- Headless mode for background operation
+- Lock-based scheduler to prevent multiple instances
+- Persistent tracking of upload status and window tasks
 
-2. **Install Dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   ```
+## Installation
 
-3. **Configure Environment:**
-   - Update `config/env_config.json` with your Instagram credentials and ChromeDriver path.
+1. Clone the repository:
+```bash
+git clone <repository-url>
+cd instagram-media-manager
+```
 
-4. **Run the Uploader:**
-   ```bash
-   python src/uploader.py
-   ```
+2. Install dependencies:
+```bash
+pip install -r requirements.txt
+```
 
-## Directory Structure
+## Configuration
 
-- `src/`: Contains the source code.
-- `config/`: Contains configuration files.
-- `tests/`: Contains test cases.
+### Scheduler Configuration
+
+Create or modify `config/scheduler_config.yml`:
+
+```yaml
+# Extra caption appended to all posts
+extra_caption: ' Please rate the Wallpaper #Wallpaper'
+
+# Path to media list CSV file
+media_list: config/media_list.csv
+
+# Schedule configuration
+schedule:
+  # Morning window: 2 posts between 13:00-15:00
+  - time: '13:00'
+    window_hours: 2
+    max_tasks: 2
+  
+  # Evening post at exactly 19:00
+  - time: '19:00'
+  
+  # Night window: 1 post between 21:30-22:30
+  - time: '21:30'
+    window_hours: 1
+```
+
+Schedule configuration options:
+- `time`: Required. Time in 24-hour format (HH:MM)
+- `window_hours`: Optional. Hours after start time during which posts can be made
+- `max_tasks`: Optional. Maximum posts in this window (default: 1)
+
+### Media List Configuration
+
+Create a CSV file (default: `config/media_list.csv`) with the following columns:
+- `file_path`: Full path to media file
+- `caption`: Caption for the post
+- `_STATUS_`: (Optional) Upload status (empty=pending, PROCESSED, ERROR)
+
+Example:
+```csv
+file_path,caption,_STATUS_
+/path/to/image1.jpg,Beautiful sunset,
+/path/to/image2.jpg,Mountain view,PROCESSED
+```
 
 ## Usage
 
-- Ensure your Instagram credentials are set in the environment or `env_config.json`.
-- Run the uploader script to automate image uploads.
+### Scheduler Mode
 
-## Contributing
+Run the scheduler to automatically post media according to the schedule:
 
-Contributions are welcome! Please open an issue or submit a pull request. 
+```bash
+# Run in headless mode (default)
+python run.py scheduler
+
+# Run with browser UI visible
+python run.py scheduler --no-headless
+
+# Use custom config and media list
+python run.py scheduler --config custom_config.yml --media-list custom_list.csv
+
+# Add extra caption to all posts
+python run.py scheduler --extra-caption "Follow me! #instagram"
+```
+
+### Single Upload Mode
+
+Upload a single media file immediately:
+
+```bash
+# Basic upload with caption
+python run.py insta-upload -f image.jpg -c "My caption"
+
+# Add extra caption
+python run.py insta-upload -f image.jpg -c "My caption" --extra-caption "#hashtags"
+
+# Show browser UI
+python run.py insta-upload -f image.jpg -c "My caption" --no-headless
+```
+
+### Caption Generation
+
+Generate captions for images using BLIP:
+
+```bash
+# Generate for single image
+python run.py generate-captions input.jpg
+
+# Generate for directory of images
+python run.py generate-captions /path/to/images/
+
+# Specify output file
+python run.py generate-captions input.jpg -o captions.csv
+```
+
+## Scheduler Operation
+
+### Multiple Instances
+
+The scheduler uses a lock file to prevent multiple instances from running simultaneously. If you try to start a second instance, you'll get an error:
+
+```
+ERROR: Another instance of scheduler is already running
+INFO: If you are sure no other instance is running, you can manually delete the lock file:
+INFO:     rm data/scheduler.lock
+```
+
+Only delete the lock file if you're certain no other scheduler instance is running.
+
+### Window Tasks
+
+The scheduler tracks tasks executed in each window using a JSON file (`data/window_tasks.json`). This ensures:
+- Maximum posts per window is not exceeded
+- Tasks aren't re-executed if scheduler is restarted within a window
+
+### Status Tracking
+
+Media upload status is tracked in the media list CSV:
+- Empty or missing: Pending
+- `PROCESSED`: Successfully uploaded
+- `ERROR`: Upload failed
+
+## Logging
+
+Logs are written to:
+- Console output
+- `logs/instagram_uploader.log`
+
+## Error Recovery
+
+1. If scheduler crashes:
+   - Check logs for error details
+   - Verify no instance is running: `ps aux | grep scheduler`
+   - Delete lock file if necessary: `rm data/scheduler.lock`
+   - Restart scheduler
+
+2. If upload fails:
+   - Item is marked as ERROR in media list
+   - Will be skipped in future runs
+   - To retry, clear the status in media list CSV 
