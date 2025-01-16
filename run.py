@@ -7,7 +7,7 @@ import sys
 logger = logging.getLogger(__name__)
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='Instagram Media Manager')
+    parser = argparse.ArgumentParser(description='Instagram Post Scheduler - Automate and schedule your Instagram posts')
     subparsers = parser.add_subparsers(dest='command', required=True,
                                     help='Commands')
     
