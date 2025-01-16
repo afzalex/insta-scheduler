@@ -1,28 +1,39 @@
-from dataclasses import dataclass
+import os
 from pathlib import Path
-from typing import Optional
-import json
-from src.exceptions import ConfigurationError
+from dataclasses import dataclass
 
 @dataclass
 class InstagramConfig:
     username: str
     password: str
-    chrome_driver_path: Path
-    user_data_dir: Path
     
     @classmethod
-    def from_json(cls, filepath: Path) -> 'InstagramConfig':
-        """Create config from JSON file"""
-        if not filepath.exists():
-            raise ConfigurationError(f"Config file not found: {filepath}")
+    def from_json(cls, config_path: Path):
+        """
+        Create config from JSON file, with environment variables taking precedence
         
-        with open(filepath) as f:
-            data = json.load(f)
+        Args:
+            config_path: Path to config JSON file
+            
+        Returns:
+            InstagramConfig: Configuration instance
+        """
+        if not config_path.exists():
+            raise FileNotFoundError(f"Config file not found: {config_path}")
+            
+        import json
+        with open(config_path) as f:
+            config = json.load(f)
             
         return cls(
-            username=data.get("INSTAGRAM_USERNAME", ""),
-            password=data.get("INSTAGRAM_PASSWORD", ""),
-            chrome_driver_path=Path(data.get("CHROME_DRIVER_PATH", "")),
-            user_data_dir=Path(data.get("USER_DATA_DIR", ""))
-        ) 
+            # Environment variables take precedence over config file
+            username=os.getenv('INSTAGRAM_USERNAME') or config.get('INSTAGRAM_USERNAME', ''),
+            password=os.getenv('INSTAGRAM_PASSWORD') or config.get('INSTAGRAM_PASSWORD', '')
+        )
+        
+    def validate(self):
+        """Validate the configuration"""
+        if not self.username:
+            raise ValueError("Instagram username not configured")
+        if not self.password:
+            raise ValueError("Instagram password not configured") 

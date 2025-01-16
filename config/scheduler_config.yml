@@ -1,9 +1,9 @@
 schedule:
-  - time: "13:00"  # 1 PM
-    window_hours: 2  # Will try to run until 3 PM if missed
-    max_tasks: 2    # Maximum number of tasks to run in this window
-  - time: "19:00"  # 7 PM
-    window_hours: 2  # Will try to run until 9 PM if missed
-    max_tasks: 1    # Maximum number of tasks to run in this window
+  - time: "13:00"  # Required
+    window_hours: 2  # Optional (default: 0)
+    max_tasks: 2    # Optional (default: 1)
+  - time: "19:00"
+  - time: "15:00"
+    window_hours: 1
 
 media_list: "config/media_list.csv" 

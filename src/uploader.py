@@ -17,14 +17,58 @@ from src.exceptions import InstagramUploaderError
 from src.config import InstagramConfig
 from pathlib import Path
 
+def validate_upload_requirements(args, config):
+    """
+    Validate all requirements before starting the upload process
+    
+    Args:
+        args: Command line arguments
+        config: Instagram configuration (already validated)
+        
+    Raises:
+        InstagramUploaderError: If any validation fails
+    """
+    # Get media path and caption
+    config_data = get_config_data("config/instagram_upload_config.txt")
+    config_lines = config_data.strip().split('\n') if config_data else []
+    
+    # Use command line args if provided, otherwise use config file
+    post_media_path = args.file if args.file else (config_lines[0].strip() if len(config_lines) > 0 else "")
+    post_caption = args.caption if args.caption else (config_lines[1].strip() if len(config_lines) > 1 else "")
+    
+    if not post_media_path:
+        raise InstagramUploaderError("No media file path provided")
+    
+    # Verify media file
+    try:
+        post_media_path = verify_file_exists(post_media_path)
+    except (FileNotFoundError, PermissionError) as e:
+        raise InstagramUploaderError(f"Media file error: {e}")
+        
+    # Check if caption is provided (optional, but log a warning)
+    if not post_caption:
+        logger.warning("No caption provided for the post")
+        
+    return post_media_path, post_caption
+
 def main():
     try:
         logger.info("Starting Instagram upload process")
         args = parse_arguments()
         
-        config = InstagramConfig.from_json(Path("config/env_config.json"))
-        logger.info("Configuration loaded successfully")
+        # Load configuration
+        try:
+            config = InstagramConfig.from_json(Path("config/env_config.json"))
+            logger.info("Configuration loaded successfully")
+        except Exception as e:
+            raise InstagramUploaderError(f"Failed to load configuration: {e}")
         
+        # Validate all requirements before starting
+        logger.info("Validating upload requirements")
+        post_media_path, post_caption = validate_upload_requirements(args, config)
+        logger.info("All requirements validated successfully")
+        
+        # Now proceed with the actual upload
         with managed_driver(headless=args.headless) as driver:
             logger.info("Navigating to Instagram login page")
             driver.get("https://www.instagram.com/accounts/login/")
@@ -36,17 +80,9 @@ def main():
                 logger.info("Already logged in")
             else:
                 logger.info("Login required, attempting login")
-                username = config.username
-                password = config.password
-
-                if not username or not password:
-                    logger.info("Credentials not found in environment, requesting manual input")
-                    username = input("Enter your Instagram username: ").strip()
-                    password = input("Enter your Instagram password: ").strip()
-                
                 logger.info("Submitting login credentials")
-                retry_get_element(driver, "//input[@name='username']").send_keys(username)
-                retry_get_element(driver, "//input[@name='password']").send_keys(password + Keys.RETURN)
+                retry_get_element(driver, "//input[@name='username']").send_keys(config.username)
+                retry_get_element(driver, "//input[@name='password']").send_keys(config.password + Keys.RETURN)
 
                 logger.info("Handling post-login prompts")
                 try:
@@ -63,23 +99,6 @@ def main():
             
             logger.info("Initiating new post creation")
             retry_get_element(driver, XPATH_NEW_POST_BUTTON).click()
-
-            logger.info("Loading post configuration")
-            config_data = get_config_data("config/instagram_upload_config.txt")
-            config_lines = config_data.strip().split('\n')
-            
-            # Use command line args if provided, otherwise use config file
-            post_media_path = args.file if args.file else (config_lines[0].strip() if len(config_lines) > 0 else "")
-            post_caption = args.caption if args.caption else (config_lines[1].strip() if len(config_lines) > 1 else "")
-            
-            if not post_media_path:
-                raise InstagramUploaderError("No media file path provided")
-                
-            try:
-                post_media_path = verify_file_exists(post_media_path)
-                logger.info(f"Media file verified: {post_media_path}")
-            except (FileNotFoundError, PermissionError) as e:
-                raise InstagramUploaderError(f"Media file error: {e}")
 
             logger.info("Uploading media file")
             retry_get_element(driver, XPATH_FILE_INPUT).send_keys(post_media_path)

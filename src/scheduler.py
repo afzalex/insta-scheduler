@@ -12,6 +12,24 @@ class SchedulerConfigError(Exception):
     """Raised when there are issues with scheduler configuration"""
     pass
 
+class MediaStatus:
+    PENDING = ""  # Default/empty state
+    ERROR = "ERROR"
+    PROCESSED = "PROCESSED"
+
+    @classmethod
+    def is_pending(cls, status):
+        """
+        Check if a status value represents a pending state
+        
+        Args:
+            status: Status value to check
+            
+        Returns:
+            bool: True if status represents pending state
+        """
+        return status != cls.ERROR and status != cls.PROCESSED
+
 class MediaScheduler:
     def __init__(self, config_path="config/scheduler_config.yml"):
         self.config_path = Path(config_path)
@@ -34,12 +52,13 @@ class MediaScheduler:
             if 'media_list' not in self.config:
                 raise SchedulerConfigError("Missing 'media_list' in config")
                 
-            # Validate schedule entries
+            # Validate schedule entries and set defaults
             for entry in self.config['schedule']:
-                required_fields = ['time', 'window_hours', 'max_tasks']
-                missing = [f for f in required_fields if f not in entry]
-                if missing:
-                    raise SchedulerConfigError(f"Schedule entry missing fields: {missing}")
+                if 'time' not in entry:
+                    raise SchedulerConfigError("Schedule entry missing required 'time' field")
+                # Set defaults for optional fields
+                entry.setdefault('window_hours', 0)
+                entry.setdefault('max_tasks', 1)
                     
         except yaml.YAMLError as e:
             raise SchedulerConfigError(f"Invalid YAML in scheduler config: {e}")
@@ -56,8 +75,9 @@ class MediaScheduler:
             if missing:
                 raise SchedulerConfigError(f"Media list missing columns: {missing}")
                 
-            if '_PROCESSED' not in self.media_df.columns:
-                self.media_df['_PROCESSED'] = False
+            # Initialize status column if it doesn't exist
+            if '_STATUS_' not in self.media_df.columns:
+                self.media_df['_STATUS_'] = MediaStatus.PENDING
                 
         except pd.errors.EmptyDataError:
             raise SchedulerConfigError("Media list file is empty")
@@ -84,7 +104,18 @@ class MediaScheduler:
             
         current_time = from_time.strftime("%H:%M")
         
-        # Find next time slot today
+        # First check if we're in any current window
+        for time_slot in self.schedule_times:
+            slot_time = datetime.combine(from_time.date(), 
+                                       datetime.strptime(time_slot, "%H:%M").time())
+            window_hours = self.schedule_config[time_slot]['window_hours']
+            window_end = slot_time + timedelta(hours=window_hours)
+            
+            # If current time is within this window, return this slot
+            if slot_time <= from_time <= window_end:
+                return slot_time
+        
+        # If not in any current window, find next time slot today
         next_today = next(
             (t for t in self.schedule_times if t > current_time),
             None
@@ -123,8 +154,18 @@ class MediaScheduler:
 
     def get_next_unprocessed_media(self):
         """Get the next unprocessed media items if within posting window"""
-        unprocessed = self.media_df[~self.media_df['_PROCESSED']]
+        # Reload media list to get latest status
+        media_list_path = Path(self.config['media_list'])
+        try:
+            self.media_df = pd.read_csv(media_list_path)
+        except Exception as e:
+            logger.error(f"Failed to reload media list: {e}")
+            return None
+
+        # Consider anything that's not explicitly PROCESSED or ERROR as pending
+        unprocessed = self.media_df[self.media_df['_STATUS_'].apply(MediaStatus.is_pending)]
         if unprocessed.empty:
+            logger.info("No unprocessed media items remaining")
             return None
             
         # Get next schedule time
@@ -139,11 +180,22 @@ class MediaScheduler:
             
         return None
 
-    def mark_as_processed(self, media_path):
-        """Mark a media item as processed"""
-        idx = self.media_df[self.media_df['file_path'] == media_path].index
-        self.media_df.loc[idx, '_PROCESSED'] = True
-        self.media_df.to_csv(self.config['media_list'], index=False)
+    def mark_status(self, media_path, status):
+        """
+        Mark a media item with the given status
+        
+        Args:
+            media_path: Path to the media file
+            status: Status to set (use MediaStatus constants)
+        """
+        try:
+            idx = self.media_df[self.media_df['file_path'] == media_path].index
+            self.media_df.loc[idx, '_STATUS_'] = status
+            # Immediately write to file to persist the status
+            self.media_df.to_csv(self.config['media_list'], index=False)
+            logger.info(f"Marked {media_path} as {status}")
+        except Exception as e:
+            logger.error(f"Failed to mark item status: {e}")
 
     def run_upload(self, media_item):
         """Run the upload script with the media item"""
@@ -155,12 +207,13 @@ class MediaScheduler:
             ], check=True)
             
             if result.returncode == 0:
-                self.mark_as_processed(media_item['file_path'])
+                self.mark_status(media_item['file_path'], MediaStatus.PROCESSED)
                 logger.info(f"Successfully processed {media_item['file_path']}")
                 logger.info(f"Tasks completed in current window: {self.tasks_in_window}")
                 return True
         except subprocess.CalledProcessError as e:
             logger.error(f"Failed to process {media_item['file_path']}: {e}")
+            self.mark_status(media_item['file_path'], MediaStatus.ERROR)
             # Decrement task counter if upload fails
             self.tasks_in_window -= 1
         return False
