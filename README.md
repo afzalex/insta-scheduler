@@ -19,9 +19,24 @@ git clone <repository-url>
 cd instagram-media-manager
 ```
 
-2. Install dependencies:
+2. Create and activate conda environment:
 ```bash
-pip install -r requirements.txt
+# Create environment from yml file
+conda env create -f environment.yml
+
+# Activate the environment
+conda activate instaworkshop
+```
+
+3. Verify installation:
+```bash
+# Should show all installed packages
+conda list
+```
+
+To update environment after changes to environment.yml:
+```bash
+conda env update -f environment.yml --prune
 ```
 
 ## Configuration
