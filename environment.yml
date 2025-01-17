@@ -10,11 +10,15 @@ dependencies:
   - pandas
   - pyyaml
   - pip
+  - moviepy
+  - ffmpeg
+  - transformers
+  - pillow
   - pip:
     - webdriver-manager
-    - transformers
-    - pillow
-    - --index-url https://download.pytorch.org/whl/cu118   # for GPU
-    # - --index-url https://download.pytorch.org/whl/cpu   # for CPU
-    - torch
-    - torchvision 
+    - python-dotenv
+    - openai-whisper
+    - torch --index-url https://download.pytorch.org/whl/cu118   # for GPU
+    # - torch --index-url https://download.pytorch.org/whl/cpu   # for CPU
+    - torchvision --index-url https://download.pytorch.org/whl/cu118   # for GPU
+    # - torchvision --index-url https://download.pytorch.org/whl/cpu   # for CPU 

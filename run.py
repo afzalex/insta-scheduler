@@ -40,8 +40,7 @@ def parse_args():
     caption_parser.add_argument('input', type=str,
                             help='Path to image file or directory')
     caption_parser.add_argument('-o', '--output', type=str,
-                            default='captions.csv',
-                            help='Output CSV file path')
+                            help='Output CSV file path (optional)')
     
     # If no arguments at all, show main help
     if len(sys.argv) == 1:
@@ -73,7 +72,7 @@ def main(args=None):
     if args.command == 'generate-captions':
         return generate_captions(
             input_path=args.input,
-            output_file=args.output
+            output_file=args.output if hasattr(args, 'output') else None
         )
     elif args.command == 'scheduler':
         # If extra_caption provided in command line, update config
