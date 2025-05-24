@@ -128,7 +128,7 @@ class CaptionGenerator:
                 )
             
             caption = self.processor.decode(outputs[0], skip_special_tokens=True)
-            logger.info(f"Generated image caption for {image_path}: {caption}")
+            logger.debug(f"Generated image caption for {image_path}: {caption}")
             return caption
             
         except Exception as e:
@@ -150,14 +150,14 @@ class CaptionGenerator:
                 audio_path = os.path.join(temp_dir, "audio.wav")
                 
                 # Extract audio from video
-                logger.info(f"Extracting audio from {video_path}")
+                logger.debug(f"Extracting audio from {video_path}")
                 from moviepy.editor import VideoFileClip
                 video = VideoFileClip(video_path)
                 video.audio.write_audiofile(audio_path, logger=None)
                 video.close()
                 
                 # Transcribe audio
-                logger.info("Transcribing audio")
+                logger.debug("Transcribing audio")
                 result = self.whisper_model.transcribe(audio_path)
                 text = result["text"].strip()
                 
@@ -165,7 +165,7 @@ class CaptionGenerator:
                 words = text.split()[:10]
                 caption = " ".join(words)
                 
-                logger.info(f"Generated video caption for {video_path}: {caption}")
+                logger.debug(f"Generated video caption for {video_path}: {caption}")
                 return caption
 
         except Exception as e:
@@ -208,21 +208,24 @@ def generate_captions(input_path: str, output_file: str = None) -> int:
             
         try:
             if path.is_dir():
-                for image_path, caption in generator.process_directory(input_path):
+                for file_path, caption in generator.process_directory(input_path):
+                    result = f"{file_path},{caption}"
+                    print(result)
                     if csv_writer:
-                        csv_writer.writerow([image_path, caption])
-                    print(f"{image_path},{caption}")
+                        csv_writer.writerow([file_path, caption])
             else:
                 try:
                     caption = generator.generate_caption(input_path)
+                    result = f"{input_path},{caption}"
+                    print(result)
                     if csv_writer:
                         csv_writer.writerow([input_path, caption])
-                    print(f"{input_path},{caption}")
                 except Exception as e:
                     error_msg = f"ERROR: {str(e)}"
+                    result = f"{input_path},{error_msg}"
+                    print(result)
                     if csv_writer:
                         csv_writer.writerow([input_path, error_msg])
-                    print(f"{input_path},{error_msg}")
         finally:
             if csv_file:
                 csv_file.close()

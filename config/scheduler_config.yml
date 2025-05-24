@@ -1,9 +1,9 @@
-extra_caption: ' Please rate the Wallpaper #Wallpaper'
-media_list: config/media_list.csv
+extra_caption: ' Please rate this video out of 5 stars'
+media_list: /home/afzal/Downloads/tikker/data/Likes/videos/tikker_media_list.csv
 schedule:
-- max_tasks: 2
-  time: '13:00'
+- cron: 0 13 * * *
+  max_tasks: 2
   window_hours: 2
-- time: '19:00'
-- time: '21:30'
+- cron: 0 19 * * *
+- cron: 0 6 * * *
   window_hours: 1

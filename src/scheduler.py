@@ -8,6 +8,7 @@ import logging
 from .window_tracker import WindowTracker
 import signal
 import atexit
+from croniter import croniter, CroniterNotAlphaError, CroniterBadCronError
 
 logger = logging.getLogger(__name__)
 
@@ -22,15 +23,7 @@ class MediaStatus:
 
     @classmethod
     def is_pending(cls, status):
-        """
-        Check if a status value represents a pending state
-        
-        Args:
-            status: Status value to check
-            
-        Returns:
-            bool: True if status represents pending state
-        """
+        """Check if a status value represents a pending state"""
         return status != cls.ERROR and status != cls.PROCESSED
 
 class MediaScheduler:
@@ -43,16 +36,18 @@ class MediaScheduler:
         self.schedule_config = {}
         self.current_window = None
         self.tasks_in_window = 0
-        self.extra_caption = None  # Store extra caption
+        self.extra_caption = None
         self.window_tracker = WindowTracker()
-        self.has_lock = False  # Track if this instance created the lock
-        self.headless = True  # Default to headless mode
+        self.has_lock = False
+        self.headless = True
+        self.force = False  # Add force flag
+        self.cron_iters = []  # Store cron iterators
         
         # Register cleanup handlers
         atexit.register(self._cleanup)
         signal.signal(signal.SIGTERM, self._signal_handler)
         signal.signal(signal.SIGINT, self._signal_handler)
-        
+
     def _cleanup(self):
         """Cleanup resources"""
         if self.has_lock:  # Only cleanup if we created the lock
@@ -79,10 +74,8 @@ class MediaScheduler:
             if missing:
                 raise SchedulerConfigError(f"Missing required keys: {missing}")
                 
-            # Get extra caption if provided
             self.extra_caption = self.config.get('extra_caption', None)
                 
-            # Validate required fields
             if 'schedule' not in self.config:
                 raise SchedulerConfigError("Missing 'schedule' in config")
             if 'media_list' not in self.config:
@@ -90,8 +83,14 @@ class MediaScheduler:
                 
             # Validate schedule entries and set defaults
             for entry in self.config['schedule']:
-                if 'time' not in entry:
-                    raise SchedulerConfigError("Schedule entry missing required 'time' field")
+                if 'cron' not in entry:
+                    raise SchedulerConfigError("Schedule entry missing required 'cron' field")
+                try:
+                    # Validate cron expression
+                    croniter(entry['cron'])  # Just validate, don't store
+                except (CroniterNotAlphaError, CroniterBadCronError) as e:
+                    raise SchedulerConfigError(f"Invalid cron expression '{entry['cron']}': {e}")
+                
                 # Set defaults for optional fields
                 entry.setdefault('window_hours', 0)
                 entry.setdefault('max_tasks', 1)
@@ -106,7 +105,7 @@ class MediaScheduler:
             
         try:
             self.media_df = pd.read_csv(media_list_path)
-            required_columns = ['file_path', 'caption']
+            required_columns = ['file_path']  # Only file_path is required
             missing = [c for c in required_columns if c not in self.media_df.columns]
             if missing:
                 raise SchedulerConfigError(f"Media list missing columns: {missing}")
@@ -115,7 +114,6 @@ class MediaScheduler:
             if '_STATUS_' not in self.media_df.columns:
                 logger.info("Adding _STATUS_ column to media list")
                 self.media_df['_STATUS_'] = MediaStatus.PENDING
-                # Save the updated DataFrame
                 self.media_df.to_csv(media_list_path, index=False)
                 logger.info("Media list updated with _STATUS_ column")
                 
@@ -124,13 +122,9 @@ class MediaScheduler:
         except pd.errors.ParserError as e:
             raise SchedulerConfigError(f"Invalid CSV format in media list: {e}")
             
-        # Sort schedule times for consistent ordering
-        self.schedule_times = sorted([s['time'] for s in self.config['schedule']])
-        self.schedule_config = {s['time']: s for s in self.config['schedule']}
-        
-        # Track tasks completed in current window
-        self.current_window = None
-        self.tasks_in_window = 0
+        # Initialize cron iterators for each schedule
+        self.cron_iters = [croniter(entry['cron'], datetime.now()) for entry in self.config['schedule']]
+        self.schedule_config = {i: entry for i, entry in enumerate(self.config['schedule'])}
 
     def update_media_list(self, new_path):
         """Update media list path and reload configuration"""
@@ -141,41 +135,61 @@ class MediaScheduler:
         """Calculate the next schedule time"""
         if from_time is None:
             from_time = datetime.now()
-            
-        current_time = from_time.strftime("%H:%M")
-        
+
         # First check if we're in any current window
-        for time_slot in self.schedule_times:
-            slot_time = datetime.combine(from_time.date(), 
-                                       datetime.strptime(time_slot, "%H:%M").time())
-            window_hours = self.schedule_config[time_slot]['window_hours']
-            window_end = slot_time + timedelta(hours=window_hours)
+        current_times = []
+        for i, cron in enumerate(self.cron_iters):
+            # Reset iterator to current time
+            cron = croniter(self.config['schedule'][i]['cron'], from_time)
+            window_hours = self.schedule_config[i]['window_hours']
             
-            # If current time is within this window, return this slot
-            if slot_time <= from_time <= window_end:
-                return slot_time
-        
-        # If not in any current window, find next time slot today
-        next_today = next(
-            (t for t in self.schedule_times if t > current_time),
-            None
-        )
-        
-        if next_today:
-            next_time = datetime.combine(from_time.date(), 
-                                       datetime.strptime(next_today, "%H:%M").time())
-        else:
-            # If no remaining slots today, get first slot tomorrow
-            next_time = datetime.combine(from_time.date() + timedelta(days=1), 
-                                       datetime.strptime(self.schedule_times[0], "%H:%M").time())
-        
-        return next_time
+            # Get the most recent schedule time
+            last_time = cron.get_prev(datetime)
+            
+            # Check previous schedule times within max window duration
+            # This ensures we don't miss a window that started earlier
+            max_window_hours = max(entry['window_hours'] for entry in self.config['schedule'])
+            check_range = timedelta(hours=max_window_hours)
+            earliest_check = from_time - check_range
+            
+            while last_time >= earliest_check:
+                window_end = last_time + timedelta(hours=window_hours)
+                # If current time is within this window
+                if last_time <= from_time <= window_end:
+                    current_times.append((last_time, i))
+                try:
+                    last_time = cron.get_prev(datetime)
+                except:
+                    break  # Stop if we can't get more previous times
+
+        # If we're in any window, return the earliest one
+        if current_times:
+            current_time, config_idx = min(current_times, key=lambda x: x[0])
+            self.current_schedule_idx = config_idx
+            return current_time
+
+        # If not in any window, find next schedule time
+        next_times = []
+        for i, cron in enumerate(self.cron_iters):
+            # Reset iterator to current time
+            cron = croniter(self.config['schedule'][i]['cron'], from_time)
+            next_time = cron.get_next(datetime)
+            next_times.append((next_time, i))
+
+        # Return the earliest next time
+        if next_times:
+            next_time, config_idx = min(next_times, key=lambda x: x[0])
+            self.current_schedule_idx = config_idx
+            return next_time
+            
+        return None
 
     def is_within_window(self, schedule_time):
         """Check if current time is within the window of a scheduled time"""
         now = datetime.now()
-        window_config = self.schedule_config[schedule_time.strftime("%H:%M")]
-        window_end = schedule_time + timedelta(hours=window_config['window_hours'])
+        window_config = self.schedule_config[self.current_schedule_idx]
+        window_hours = window_config['window_hours']
+        window_end = schedule_time + timedelta(hours=window_hours)
         
         # Reset task counter if we've moved to a new window
         if self.current_window != schedule_time:
@@ -194,7 +208,7 @@ class MediaScheduler:
         return False
 
     def get_next_unprocessed_media(self):
-        """Get the next unprocessed media items if within posting window"""
+        """Get the next unprocessed media item"""
         # Reload media list to get latest status
         media_list_path = Path(self.config['media_list'])
         try:
@@ -215,17 +229,8 @@ class MediaScheduler:
             logger.info("No unprocessed media items remaining")
             return None
             
-        # Get next schedule time
-        schedule_time = self.get_next_schedule_time()
-        
-        # Check if we're within the posting window
-        if self.is_within_window(schedule_time):
-            # Get first unprocessed item
-            next_item = unprocessed.iloc[0]
-            self.tasks_in_window += 1
-            return next_item
-            
-        return None
+        # Get first unprocessed item
+        return unprocessed.iloc[0]
 
     def mark_status(self, media_path, status):
         """
@@ -249,9 +254,12 @@ class MediaScheduler:
         try:
             command = [
                 'python', 'run.py', 'insta-upload',
-                '-f', media_item['file_path'],
-                '-c', media_item['caption']
+                '-f', media_item['file_path']
             ]
+            
+            # Add caption if it exists in media list and is not empty
+            if 'caption' in media_item and pd.notna(media_item['caption']):
+                command.extend(['-c', media_item['caption']])
             
             # Add extra caption if provided
             if self.extra_caption:
@@ -282,12 +290,17 @@ class MediaScheduler:
 
     def run(self):
         """Main scheduler loop"""
-        # Create lock file
-        if not self.window_tracker.create_lock():
+        # Create lock file (unless force is True)
+        if not self.force and not self.window_tracker.create_lock():
             logger.error("Another instance of scheduler is already running")
-            logger.info("If you are sure no other instance is running, you can manually delete the lock file:")
-            logger.info(f"    rm {self.window_tracker.lock_file}")
+            logger.info("If you are sure no other instance is running, you can:")
+            logger.info("1. Delete the lock file: rm data/scheduler.lock")
+            logger.info("2. Use --force to bypass this check")
             return False
+            
+        # If force is True, try to create lock but don't fail if it exists
+        if self.force:
+            self.window_tracker.create_lock()
             
         self.has_lock = True  # Mark that we created the lock
         
@@ -311,14 +324,25 @@ class MediaScheduler:
                     
                     wait_str = " and ".join(time_str) if len(time_str) <= 2 else ", ".join(time_str[:-1]) + f" and {time_str[-1]}"
                     logger.info(f"Waiting for next scheduled task at {next_schedule.strftime('%H:%M')} ({wait_str} from now)")
-                
+                    time.sleep(60)
+                    continue
+
+                # Check if we're in a posting window
+                if not self.is_within_window(next_schedule):
+                    time.sleep(60)
+                    continue
+
+                # Get next unprocessed media
                 media_item = self.get_next_unprocessed_media()
-                
                 if media_item is not None:
                     logger.info(f"Processing media: {media_item['file_path']}")
                     self.insta_upload(media_item)
+                else:
+                    # No media to process, wait longer
+                    logger.info("No unprocessed media available, waiting 5 minutes before checking again")
+                    time.sleep(300)  # Wait 5 minutes before checking again
                 
-                # Sleep for a minute before checking again
+                # Short sleep before next iteration
                 time.sleep(60)
         except Exception as e:
             logger.exception("Error in scheduler loop")
@@ -327,7 +351,7 @@ class MediaScheduler:
             # Release lock file when done
             self._cleanup()
 
-def main(config_path=None, media_list=None, headless=True):
+def main(config_path=None, media_list=None, headless=True, force=False):
     """
     Run the scheduler with the specified configuration
     
@@ -335,6 +359,7 @@ def main(config_path=None, media_list=None, headless=True):
         config_path: Path to scheduler config YAML file
         media_list: Path to media list CSV file (overrides config)
         headless: Whether to run in headless mode (default: True)
+        force: Whether to bypass instance check (default: False)
         
     Returns:
         int: Exit code (0 for success, 1 for error)
@@ -347,14 +372,8 @@ def main(config_path=None, media_list=None, headless=True):
         
         scheduler = MediaScheduler(config_path=config_path or "config/scheduler_config.yml")
         scheduler.headless = headless  # Set headless mode
+        scheduler.force = force  # Set force flag
         
-        # Check if scheduler is already running
-        if scheduler.window_tracker.is_scheduler_running():
-            logger.error("Another instance of scheduler is already running")
-            logger.info("If you are sure no other instance is running, you can manually delete the lock file:")
-            logger.info(f"    rm {scheduler.window_tracker.lock_file}")
-            return 1
-            
         scheduler.validate_and_load_config()  # Load config after initialization
         
         if media_list:

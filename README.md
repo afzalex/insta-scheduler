@@ -76,15 +76,16 @@ Schedule configuration options:
 ### Media List Configuration
 
 Create a CSV file (default: `config/media_list.csv`) with the following columns:
-- `file_path`: Full path to media file
-- `caption`: Caption for the post
-- `_STATUS_`: (Optional) Upload status (empty=pending, PROCESSED, ERROR)
+- `file_path`: Required. Full path to media file
+- `caption`: Optional. Custom caption for the post. If not provided, an AI-generated caption will be used
+- `_STATUS_`: Optional. Upload status (empty=pending, PROCESSED, ERROR)
 
 Example:
 ```csv
 file_path,caption,_STATUS_
-/path/to/image1.jpg,Beautiful sunset,
-/path/to/image2.jpg,Mountain view,PROCESSED
+/path/to/image1.jpg,Beautiful sunset,                  # Custom caption
+/path/to/image2.jpg,,                                 # Will use AI-generated caption
+/path/to/image3.jpg,Mountain view,PROCESSED           # Already processed
 ```
 
 ## Usage

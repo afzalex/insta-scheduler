@@ -34,6 +34,8 @@ def parse_args():
                               help='Run with browser UI (default: headless)')
     scheduler_parser.add_argument('--extra-caption', type=str,
                               help='Additional text to append to all captions')
+    scheduler_parser.add_argument('--force', action='store_true',
+                              help='Force start even if another instance is running')
     
     # Caption generator command
     caption_parser = subparsers.add_parser('generate-captions', help='Generate captions for images')
@@ -84,7 +86,7 @@ def main(args=None):
             with open(args.config, 'w') as f:
                 yaml.dump(config, f)
         
-        return scheduler_main(args.config, args.media_list, not args.no_headless)
+        return scheduler_main(args.config, args.media_list, not args.no_headless, args.force)
     else:  # insta-upload
         # Create a new Namespace with uploader arguments
         upload_args = argparse.Namespace(
